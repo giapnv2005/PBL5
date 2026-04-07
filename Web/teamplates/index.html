@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>He Thong Phan Loai Linh Kien</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body>
+    <header>
+      <h1>HE THONG PHAN LOAI LINH KIEN</h1>
+      <p>Raspberry Pi + TensorFlow Lite + Arduino</p>
+    </header>
+
+    <main class="container">
+      <section class="left panel">
+        <h2>Camera</h2>
+        <img id="videoStream" alt="Camera stream" />
+
+        <h2>Anh vua chup</h2>
+        <img id="captureImage" alt="Anh da chup" />
+      </section>
+
+      <section class="right panel">
+        <h2>Ket qua phan loai</h2>
+
+        <div class="result">
+          <article class="item">
+            <h3>Capacitor</h3>
+            <div id="countA">0</div>
+          </article>
+
+          <article class="item">
+            <h3>IC</h3>
+            <div id="countB">0</div>
+          </article>
+
+          <article class="item">
+            <h3>Transistor</h3>
+            <div id="countC">0</div>
+          </article>
+        </div>
+
+        <div class="meta">
+          <p><strong>Label:</strong> <span id="lastLabel">N/A</span></p>
+          <p><strong>Confidence:</strong> <span id="lastConfidence">0.00</span></p>
+          <p><strong>Queue:</strong> <span id="queueSize">0</span></p>
+          <p><strong>System:</strong> <span id="systemState">running</span></p>
+        </div>
+
+        <div class="control">
+          <button id="startBtn" type="button">Bat</button>
+          <button id="stopBtn" type="button">Dung</button>
+          <button id="testTriggerBtn" type="button">Test Trigger</button>
+        </div>
+      </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+  </body>
+</html>
