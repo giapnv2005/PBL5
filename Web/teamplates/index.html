@@ -3,13 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>He Thong Phan Loai Linh Kien</title>
+    <title>Hệ Thống Phân Loại Linh Kiện</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
   </head>
   <body>
     <header>
-      <h1>HE THONG PHAN LOAI LINH KIEN</h1>
-      <p>Raspberry Pi + TensorFlow Lite + Arduino</p>
+      <h1>HỆ THỐNG PHÂN LOẠI LINH KIỆN</h1>
     </header>
 
     <main class="container">
@@ -17,12 +16,12 @@
         <h2>Camera</h2>
         <img id="videoStream" alt="Camera stream" />
 
-        <h2>Anh vua chup</h2>
+        <h2>Ảnh vừa chụp</h2>
         <img id="captureImage" alt="Anh da chup" />
       </section>
 
       <section class="right panel">
-        <h2>Ket qua phan loai</h2>
+        <h2>Kết quả phân loại</h2>
 
         <div class="result">
           <article class="item">
@@ -49,8 +48,8 @@
         </div>
 
         <div class="control">
-          <button id="startBtn" type="button">Bat</button>
-          <button id="stopBtn" type="button">Dung</button>
+          <button id="startBtn" type="button">Bắt đầu</button>
+          <button id="stopBtn" type="button">Dừng</button>
           <button id="testTriggerBtn" type="button">Test Trigger</button>
         </div>
       </section>

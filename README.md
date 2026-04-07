@@ -1,170 +1,242 @@
-Tổng quan kiến trúc
-src/ → xử lý logic hệ thống (AI + Arduino)
-Web/ → giao diện + Flask
-Models/ → model AI
-run.py → chạy toàn hệ thống
+# Hệ Thống Phân Loại Linh Kiện (Raspberry Pi + TensorFlow Lite + Arduino)
 
-🧠 1. Models/
-📄 my_model.tflite
+## Giới thiệu
 
-👉 Chức năng:
+Đây là dự án phân loại linh kiện theo thời gian thực, sử dụng camera kết hợp AI (TensorFlow Lite) trên Raspberry Pi, đồng thời giao tiếp với Arduino qua Serial để điều khiển cơ cấu phân loại.
 
-Model AI đã convert (TensorFlow Lite)
-Dùng để phân loại linh kiện
+Hệ thống gồm 4 lớp chính:
 
-👉 Được load trong:
+- Nhận ảnh từ camera.
+- Suy luận AI để nhận diện linh kiện.
+- Đồng bộ kết quả bằng hàng đợi (queue) theo nhịp cảm biến.
+- Hiển thị trạng thái và kết quả qua giao diện web Flask.
 
-model_loader.py
-📄 labels.txt
+## Mục lục
 
-👉 Chức năng:
+1. [Tính năng nổi bật](#tính-năng-nổi-bật)
+2. [Kiến trúc hệ thống](#kiến-trúc-hệ-thống)
+3. [Sơ đồ Mermaid](#sơ-đồ-mermaid)
+4. [Cấu trúc thư mục](#cấu-trúc-thư-mục)
+5. [Yêu cầu môi trường](#yêu-cầu-môi-trường)
+6. [Cài đặt](#cài-đặt)
+7. [Chạy hệ thống](#chạy-hệ-thống)
+8. [API hiện có](#api-hiện-có)
+9. [Giao thức Serial Pi-Arduino](#giao-thức-serial-pi-arduino)
+10. [Mapping nhãn sang tín hiệu](#mapping-nhãn-sang-tín-hiệu)
+11. [Mô tả các module chính](#mô-tả-các-module-chính)
+12. [Xử lý sự cố](#xử-lý-sự-cố)
+13. [Phụ thuộc](#phụ-thuộc)
 
-Mapping index → tên linh kiện
+## Tính năng nổi bật
 
-⚙️ 2. src/ (PHẦN QUAN TRỌNG NHẤT)
-📄 model_loader.py
+- Phân loại linh kiện bằng mô hình `.tflite`.
+- Hỗ trợ camera qua OpenCV (ưu tiên) và Picamera2 (dự phòng).
+- Đồng bộ kết quả bằng `ResultQueue` để tránh lệch nhịp giữa detect và cơ cấu gạt.
+- Giao tiếp serial với Arduino qua `/dev/ttyUSB0`.
+- Dashboard web hiển thị:
+  - luồng camera,
+  - ảnh vừa chụp,
+  - số lượng từng loại linh kiện,
+  - nhãn và độ tin cậy mới nhất,
+  - trạng thái chạy/dừng của hệ thống.
 
-👉 Chức năng:
+## Kiến trúc hệ thống
 
-Load model .tflite 1 lần duy nhất
-Chuẩn bị interpreter
+Luồng tổng quát:
 
-👉 Nhiệm vụ:
+1. Arduino gửi `DETECTED` khi cảm biến phát hiện vật.
+2. Raspberry Pi chụp ảnh, chạy AI, ánh xạ nhãn thành mã tín hiệu (`1`, `2`, `3`) và đưa vào queue.
+3. Khi Arduino gửi `READY`/`REQUEST`/`IR2`/`IR3`, Raspberry Pi lấy phần tử đầu queue và gửi ngược lại.
+4. Web frontend gọi API định kỳ để cập nhật dữ liệu hiển thị.
 
-Load model
-Allocate tensor
-Lấy input/output details
+## Sơ đồ Mermaid
 
-📄 image_processing.py
+### 1) Sơ đồ kiến trúc tổng thể
 
-👉 Chức năng:
+```mermaid
+flowchart LR
+    CAM[Camera] --> PI[Raspberry Pi]
+    ARD[Arduino + Cảm biến IR] <-->|Serial USB| PI
+    PI --> AI[TFLite Model
+    my_model.tflite]
+    PI --> Q[ResultQueue
+    FIFO]
+    PI --> WEB[Flask Web App]
+    WEB --> UI[Dashboard Browser]
+```
 
-Xử lý ảnh từ camera
-Resize, normalize
-Gọi model để predict
+### 2) Sơ đồ luồng xử lý thời gian thực
 
-👉 Nhiệm vụ:
+```mermaid
+sequenceDiagram
+    participant A as Arduino
+    participant C as SystemController (Pi)
+    participant M as AI Classifier
+    participant Q as ResultQueue
+    participant W as Web UI
 
-Nhận frame từ camera
-Tiền xử lý ảnh
-Trả về:
-label
-confidence
+    A->>C: DETECTED
+    C->>C: Chụp frame từ camera
+    C->>M: predict(frame)
+    M-->>C: label, confidence
+    C->>Q: enqueue(signal)
+    C->>C: Lưu ảnh + cập nhật state
 
-👉 Output:
+    A->>C: READY / REQUEST / IR2 / IR3
+    C->>Q: dequeue(default="0")
+    Q-->>C: signal
+    C-->>A: send_signal(signal)
 
-return label, confidence
-📄 serial_comm.py
+    loop Mỗi 1 giây
+        W->>C: GET /result
+        C-->>W: counts, last_result, queue_size, running
+    end
+```
 
-👉 Chức năng:
+## Cấu trúc thư mục
 
-Giao tiếp giữa Pi ↔ Arduino (qua USB)
+```text
+PBL5/
+|- run.py
+|- requirements.txt
+|- README.md
+|- Models/
+|  |- my_model.tflite
+|  `- labels.txt
+|- src/
+|  |- controller.py
+|  |- image_processing.py
+|  |- model_loader.py
+|  |- queue_manager.py
+|  `- serial_comm.py
+`- Web/
+   |- app.py
+   |- static/
+   |  |- script.js
+   |  |- style.css
+   |  `- captures/
+   `- teamplates/
+      `- index.html
+```
 
-👉 Nhiệm vụ:
+Lưu ý: thư mục template hiện đang là `teamplates` và Flask cũng đang cấu hình đúng theo tên này.
 
-Mở cổng serial (/dev/ttyUSB0)
-Gửi tín hiệu:
-'1', '2', '3'
-Nhận tín hiệu:
-"DETECTED"
-"READY"
+## Yêu cầu môi trường
 
-📄 queue_manager.py
+- Linux (khuyến nghị Raspberry Pi OS).
+- Python 3.10 trở lên.
+- Camera hoạt động được với OpenCV hoặc Picamera2.
+- Arduino kết nối serial USB tại `/dev/ttyUSB0`.
 
-👉 Chức năng:
-🔥 Cực kỳ quan trọng
+## Cài đặt
 
-Quản lý hàng đợi kết quả phân loại
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
 
-👉 Vì:
+## Chạy hệ thống
 
-Vật di chuyển → cần đồng bộ thời gian
+Chạy entrypoint chính:
 
-👉 Nhiệm vụ:
+```bash
+python run.py
+```
 
-Thêm kết quả:
-enqueue(result)
-Lấy kết quả:
-dequeue()
+Mặc định ứng dụng chạy tại `0.0.0.0:5000`.
 
-👉 Dữ liệu:
+Tùy chỉnh host/port bằng biến môi trường:
 
-Queue = [1, 2, 3]
-📄 controller.py
+```bash
+HOST=0.0.0.0 PORT=5000 python run.py
+```
 
-👉 Chức năng:
-🔥 TRUNG TÂM HỆ THỐNG
+Truy cập dashboard:
 
-👉 Đây là file quan trọng nhất
+- `http://<IP_RaspberryPi>:5000/`
 
-Nhiệm vụ của controller.py
-1. Nhận tín hiệu từ Arduino
-"DETECTED" từ IR1
-2. Khi detect:
-Chụp ảnh
-Gọi AI (image_processing)
-Lưu kết quả vào queue
-3. Khi Arduino yêu cầu (IR2, IR3)
-Lấy kết quả từ queue
-Gửi lại Arduino
-4. Cập nhật dữ liệu cho Web
-Ảnh vừa chụp
-Kết quả phân loại
+## API hiện có
 
-🌐 3. Web/
-📄 app.py
+- `GET /`: Trang dashboard.
+- `GET /video_feed`: Stream camera dạng multipart (frame PNG).
+- `GET /latest_frame`: Trả frame JPEG mới nhất (204 nếu chưa có frame).
+- `GET /result`: Trả JSON trạng thái tổng hợp.
+- `GET /get_data`: Trả JSON rút gọn cho giao diện cũ.
+- `POST /trigger`: Kích hoạt 1 lượt detect thủ công (phục vụ test).
+- `POST /start`: Khởi động controller.
+- `POST /stop`: Dừng controller.
 
-👉 Chức năng:
+## Giao thức Serial Pi-Arduino
 
-Server Flask
+### Arduino -> Raspberry Pi
 
-👉 Nhiệm vụ:
+- `DETECTED`: Có vật tại vị trí chụp ảnh, Pi sẽ chụp + phân loại + enqueue.
+- `READY` / `REQUEST` / `IR2` / `IR3`: Yêu cầu Pi trả tín hiệu phân loại tiếp theo.
 
-Route web:
-/ → trang chính
-/video_feed → stream camera
-/result → trả kết quả AI
-📁 templates/index.html
+### Raspberry Pi -> Arduino
 
-👉 Chức năng:
+- `1`, `2`, `3`: Mã phân loại tương ứng thứ tự nhãn trong `Models/labels.txt`.
+- `0`: Không có kết quả hợp lệ hoặc queue rỗng.
 
-Giao diện web
+## Mapping nhãn sang tín hiệu
 
-👉 Hiển thị:
+`SystemController` tạo mapping theo thứ tự nhãn trong `Models/labels.txt`:
 
-Camera stream
-Ảnh vừa chụp
-Tên linh kiện
-Nút start/stop
-📁 static/script.js
+- Dòng 1 -> tín hiệu `1`
+- Dòng 2 -> tín hiệu `2`
+- Dòng 3 -> tín hiệu `3`
 
-👉 Chức năng:
+Ví dụ hiện tại:
 
-Gọi API Flask (AJAX)
+1. Capacitor -> `1`
+2. IC -> `2`
+3. Transistor -> `3`
 
-👉 Nhiệm vụ:
+## Mô tả các module chính
 
-Fetch kết quả AI liên tục
-Update UI
-📁 static/style.css
+- `src/model_loader.py`: Load model TFLite, đọc thông tin tensor, tiền xử lý đầu vào.
+- `src/image_processing.py`: Lớp `ComponentClassifier` thực hiện suy luận và chuẩn hóa kết quả.
+- `src/queue_manager.py`: Hàng đợi FIFO thread-safe cho tín hiệu phân loại.
+- `src/serial_comm.py`: Quản lý kết nối serial, đọc/ghi dữ liệu với Arduino.
+- `src/controller.py`: Bộ điều phối trung tâm (camera + AI + queue + serial + trạng thái web).
+- `Web/app.py`: Flask app cung cấp giao diện và API.
+- `run.py`: Điểm chạy chính của toàn hệ thống.
 
-👉 Chức năng:
+## Xử lý sự cố
 
-CSS giao diện
-📁 static/captures/
+### Không mở được serial `/dev/ttyUSB0`
 
-👉 Chức năng:
+- Kiểm tra quyền truy cập:
+  ```bash
+  ls -l /dev/ttyUSB0
+  ```
+- Thêm user vào nhóm `dialout` nếu cần:
+  ```bash
+  sudo usermod -a -G dialout $USER
+  ```
+- Đăng xuất/đăng nhập lại sau khi thêm nhóm.
 
-Lưu ảnh đã chụp
-🚀 4. File ngoài
-📄 requirements.txt
+### Không nhận camera
 
-👉 Chức năng:
+- Kiểm tra lại cổng camera và quyền truy cập.
+- Hệ thống sẽ ưu tiên OpenCV, nếu thất bại sẽ thử Picamera2.
+- Đảm bảo camera không bị tiến trình khác chiếm dụng.
 
-Danh sách thư viện cần cài
+### Lỗi model hoặc labels
 
-📄 run.py
+- Đảm bảo tồn tại đủ 2 file:
+  - `Models/my_model.tflite`
+  - `Models/labels.txt`
+- Số lượng labels nên khớp với số class output của model.
 
-👉 Chức năng:
-🔥 Điểm chạy chính của toàn hệ thống
+## Phụ thuộc
 
+- Flask==3.0.3
+- opencv-python-headless==4.9.0.80
+- numpy==1.24.3
+- pyserial==3.5
+- tflite-runtime==2.14.0
+- Werkzeug==3.0.1
+- Pillow==10.0.0
