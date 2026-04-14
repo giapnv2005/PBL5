@@ -53,7 +53,9 @@ class SystemController:
         else:
             print("[WARNING] AI classifier unavailable; system will run camera/serial only")
 
-        labels = self._load_labels(labels_path)
+        label_entries = self._load_label_entries(labels_path)
+        labels = [label for _, label in label_entries]
+        signals = [signal for signal, _ in label_entries]
         if self.classifier is not None and getattr(self.classifier, "labels", None):
             labels = self.classifier.labels
 
@@ -85,15 +87,18 @@ class SystemController:
             "timestamp": None,
         }
         self._last_image_rel = ""
-        self._label_to_signal = {label: str(index + 1) for index, label in enumerate(labels)}
+        self._label_to_signal = {
+            label: signals[index] if index < len(signals) else str(index)
+            for index, label in enumerate(labels)
+        }
 
 
 
     @staticmethod
 
-    def _load_labels(labels_path: str) -> list[str]:
+    def _load_label_entries(labels_path: str) -> list[tuple[str, str]]:
 
-        parsed: list[str] = []
+        parsed: list[tuple[str, str]] = []
 
         try:
 
@@ -109,7 +114,10 @@ class SystemController:
 
                     parts = raw.split(maxsplit=1)
 
-                    parsed.append(parts[1] if len(parts) > 1 else parts[0])
+                    signal = parts[0]
+                    label = parts[1] if len(parts) > 1 else parts[0]
+
+                    parsed.append((signal, label))
 
         except OSError:
 
@@ -339,7 +347,13 @@ class SystemController:
 
             if message == "DETECTED":
 
-                self.process_detected()
+                payload = self.process_detected()
+                signal = "0"
+                if payload is not None:
+                    signal = str(payload.get("last_result", {}).get("signal", "0"))
+                # Compatibility path: some Arduino sketches expect result
+                # immediately after DETECTED without sending REQUEST/READY.
+                self.serial.send_signal(signal)
 
             elif message in {"READY", "REQUEST", "IR2", "IR3"}:
 
