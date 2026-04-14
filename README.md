@@ -161,9 +161,7 @@ Truy cập dashboard:
 
 - `GET /`: Trang dashboard.
 - `GET /video_feed`: Stream camera dạng multipart (frame PNG).
-- `GET /latest_frame`: Trả frame JPEG mới nhất (204 nếu chưa có frame).
 - `GET /result`: Trả JSON trạng thái tổng hợp.
-- `GET /get_data`: Trả JSON rút gọn cho giao diện cũ.
 - `POST /trigger`: Kích hoạt 1 lượt detect thủ công (phục vụ test).
 - `POST /start`: Khởi động controller.
 - `POST /stop`: Dừng controller.

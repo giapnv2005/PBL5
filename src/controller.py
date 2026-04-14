@@ -54,10 +54,10 @@ class SystemController:
             print("[WARNING] AI classifier unavailable; system will run camera/serial only")
 
         label_entries = self._load_label_entries(labels_path)
+        signal_by_label = {label: signal for signal, label in label_entries}
         labels = [label for _, label in label_entries]
-        signals = [signal for signal, _ in label_entries]
         if self.classifier is not None and getattr(self.classifier, "labels", None):
-            labels = self.classifier.labels
+            labels = list(self.classifier.labels)
 
         self.queue = ResultQueue()
         self.serial = SerialComm(port=serial_port, baudrate=baudrate)
@@ -88,7 +88,7 @@ class SystemController:
         }
         self._last_image_rel = ""
         self._label_to_signal = {
-            label: signals[index] if index < len(signals) else str(index)
+            label: signal_by_label.get(label, str(index))
             for index, label in enumerate(labels)
         }
 
@@ -411,22 +411,6 @@ class SystemController:
 
 
 
-            return None
-
-
-
-    def get_preview_jpeg(self) -> Optional[bytes]:
-        frame = self._read_frame()
-        if frame is None:
-            return None
-        try:
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            ok, encoded = cv2.imencode(".jpg", frame_rgb)
-            if not ok:
-                return None
-            return encoded.tobytes()
-        except Exception as e:
-            print(f"[ERROR] Exception during JPEG encoding: {e}")
             return None
 
 

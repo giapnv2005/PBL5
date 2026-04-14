@@ -48,16 +48,6 @@ def video_feed():
     return Response(_frame_generator(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
 
-@app.route("/latest_frame")
-def latest_frame():
-    frame = controller.get_preview_jpeg()
-    if frame is None:
-        # Uncomment for debugging:
-        # print("[DEBUG] /latest_frame: Camera returned None")
-        return "", 204
-    return Response(frame, mimetype="image/jpeg")
-
-
 @app.route("/result")
 def result():
     payload = controller.get_result_payload()
@@ -66,19 +56,6 @@ def result():
     else:
         payload["last_image_url"] = ""
     return jsonify(payload)
-
-
-@app.route("/get_data")
-def get_data():
-    payload = controller.get_result_payload()
-    return jsonify(
-        {
-            "counts": payload["counts"],
-            "last_image": f"/static/{payload['last_image']}" if payload["last_image"] else "",
-            "last_result": payload["last_result"],
-            "queue_size": payload["queue_size"],
-        }
-    )
 
 
 @app.route("/trigger", methods=["POST"])
