@@ -65,10 +65,9 @@ class SystemController:
         self.capture_dir = Path(capture_dir)
         self.capture_dir.mkdir(parents=True, exist_ok=True)
 
-        self._camera_index = camera_index
         self._camera_size = (640, 480)
         self._camera_format = "RGB888"
-        self.camera = None
+        self.camera = None          # giữ để không break code ngoài trỏ vào thuộc tính này
         self.picam2 = None
         self._camera_backend = "none"
         self._running = False
@@ -92,328 +91,160 @@ class SystemController:
             for index, label in enumerate(labels)
         }
 
-
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
     @staticmethod
-
     def _load_label_entries(labels_path: str) -> list[tuple[str, str]]:
-
         parsed: list[tuple[str, str]] = []
-
         try:
-
             with open(labels_path, "r", encoding="utf-8") as handle:
-
                 for line in handle:
-
                     raw = line.strip()
-
                     if not raw:
-
                         continue
-
                     parts = raw.split(maxsplit=1)
-
                     signal = parts[0]
                     label = parts[1] if len(parts) > 1 else parts[0]
-
                     parsed.append((signal, label))
-
         except OSError:
-
             pass
-
         return parsed
 
-
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
     def start(self) -> None:
-
         if self._running:
-
             return
-
         with self._camera_lock:
-
             if self._camera_backend == "none":
-
                 self._init_camera()
-
         self._running = True
-
         self.serial.connect()
-
         self._thread = threading.Thread(target=self._serial_loop, daemon=True)
-
         self._thread.start()
 
-
-
     def stop(self) -> None:
-
         self._running = False
-
         if self._thread and self._thread.is_alive():
-
             self._thread.join(timeout=1.0)
-
         self._thread = None
-
         self.serial.close()
-
         with self._camera_lock:
-
             self._close_camera()
 
-
+    # ------------------------------------------------------------------
+    # Camera — chỉ dùng Picamera2 (camera CSI chính hãng Raspberry Pi)
+    # ------------------------------------------------------------------
 
     def _init_camera(self) -> None:
-
         self._close_camera()
 
+        if Picamera2 is None:
+            print("[ERROR] Picamera2 không khả dụng — kiểm tra cài đặt libcamera")
+            return
 
+        picam2 = None
+        try:
+            picam2 = Picamera2()
+            config = picam2.create_preview_configuration(
+                main={"size": self._camera_size, "format": self._camera_format}
+            )
+            picam2.configure(config)
+            picam2.start()
 
-        # Try V4L2 first (better compatibility on Raspberry Pi USB cams)
+            # Chờ ISP hội tụ Auto Exposure và Auto White Balance
+            # Camera Module V2 (IMX219) cần ~2 giây để ổn định
+            time.sleep(2.0)
 
-        camera = cv2.VideoCapture(self._camera_index, cv2.CAP_V4L2)
-
-        if not camera.isOpened():
-
-            camera = cv2.VideoCapture(self._camera_index)
-
-
-
-        if camera.isOpened():
-
-            camera.set(cv2.CAP_PROP_FRAME_WIDTH, self._camera_size[0])
-
-            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self._camera_size[1])
-
-            camera.set(cv2.CAP_PROP_FPS, 15)
-
-            camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
-
-
-            ok = False
-
-            for _ in range(12):
-
-                ret, frame = camera.read()
-
-                if ret and frame is not None:
-
-                    ok = True
-
-                    break
-
-                time.sleep(0.05)
-
-
-
-            if ok:
-
-                self.camera = camera
-
-                self._camera_backend = "opencv"
-
-                print(f"[OK] Camera ready with OpenCV backend (index={self._camera_index})")
-
+            frame = picam2.capture_array()
+            if frame is not None:
+                self.picam2 = picam2
+                self._camera_backend = "picamera2"
+                print("[OK] Camera ready với Picamera2 (ISP đã hội tụ)")
                 return
 
+            print("[ERROR] Picamera2 khởi động xong nhưng không capture được frame")
 
+        except Exception as exc:
+            print(f"[ERROR] Picamera2 init thất bại: {exc}")
 
-            camera.release()
-
-
-
-        if Picamera2 is not None:
-
-            picam2 = None
-
-            try:
-
-                picam2 = Picamera2()
-
-                config = picam2.create_preview_configuration(
-
-                    main={"size": self._camera_size, "format": self._camera_format}
-
-                )
-
-                picam2.configure(config)
-
-                picam2.start()
-
-                time.sleep(0.2)
-
-                frame = picam2.capture_array()
-
-                if frame is not None:
-
-                    self.picam2 = picam2
-
-                    self._camera_backend = "picamera2"
-
-                    print("[OK] Camera ready with Picamera2 backend")
-
-                    return
-
-            except Exception as exc:
-
-                print(f"[WARNING] Picamera2 init failed: {exc}")
-
-            finally:
-
-                if picam2 is not None and self.picam2 is None:
-
-                    try:
-
-                        picam2.stop()
-
-                    except Exception:
-
-                        pass
-
-                    try:
-
-                        picam2.close()
-
-                    except Exception:
-
-                        pass
-
-
-
-        print("[ERROR] No working camera backend found")
-
-
+        finally:
+            # Nếu init thất bại thì dọn dẹp instance tạm
+            if picam2 is not None and self.picam2 is None:
+                try:
+                    picam2.stop()
+                except Exception:
+                    pass
+                try:
+                    picam2.close()
+                except Exception:
+                    pass
 
     def _close_camera(self) -> None:
-
-        if self.camera is not None:
-
-            try:
-
-                self.camera.release()
-
-            except Exception:
-
-                pass
-
-        self.camera = None
-
-
-
         if self.picam2 is not None:
-
             try:
-
                 self.picam2.stop()
-
             except Exception:
-
                 pass
-
             try:
-
                 self.picam2.close()
-
             except Exception:
-
                 pass
-
         self.picam2 = None
-
+        self.camera = None
         self._camera_backend = "none"
-
         time.sleep(0.1)
 
+    # ------------------------------------------------------------------
+    # Frame capture
+    # ------------------------------------------------------------------
 
+    def _read_frame(self):
+        with self._camera_lock:
+            if self._camera_backend == "none":
+                self._init_camera()
+
+            if self._camera_backend == "picamera2" and self.picam2 is not None:
+                try:
+                    frame_rgb = self.picam2.capture_array()
+                    if frame_rgb is not None:
+                        # Picamera2 trả về RGB, chuyển sang BGR cho OpenCV/classifier
+                        return cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+                except Exception as exc:
+                    print(f"[WARNING] Picamera2 capture thất bại: {exc}")
+                    self._close_camera()
+
+            return None
+
+    # ------------------------------------------------------------------
+    # Serial loop
+    # ------------------------------------------------------------------
 
     def _serial_loop(self) -> None:
-
         while self._running:
-
             message = self.serial.read_message(timeout=0.1)
-
             if not message:
-
                 time.sleep(0.01)
-
                 continue
 
-
-
             if message == "DETECTED":
-
                 payload = self.process_detected()
                 signal = "0"
                 if payload is not None:
                     signal = str(payload.get("last_result", {}).get("signal", "0"))
-                # Compatibility path: some Arduino sketches expect result
-                # immediately after DETECTED without sending REQUEST/READY.
+                # Compatibility: một số Arduino sketch gửi tín hiệu ngay sau DETECTED
                 self.serial.send_signal(signal)
 
             elif message in {"READY", "REQUEST", "IR2", "IR3"}:
-
                 self.process_ready_request()
 
-
-
-    def _read_frame(self):
-
-        with self._camera_lock:
-
-            if self._camera_backend == "none":
-
-                self._init_camera()
-
-
-
-            if self._camera_backend == "opencv" and self.camera is not None:
-
-                ok, frame = self.camera.read()
-
-                if ok and frame is not None:
-
-                    return frame
-
-
-
-                # Reinitialize once when OpenCV camera drops frames repeatedly.
-
-                self._init_camera()
-
-                if self._camera_backend == "opencv" and self.camera is not None:
-
-                    ok, frame = self.camera.read()
-
-                    if ok and frame is not None:
-
-                        return frame
-
-
-
-            if self._camera_backend == "picamera2" and self.picam2 is not None:
-
-                try:
-
-                    frame_rgb = self.picam2.capture_array()
-
-                    if frame_rgb is not None:
-
-                        return cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
-
-                except Exception as exc:
-
-                    print(f"[WARNING] Picamera2 capture failed: {exc}")
-
-
-
-            return None
-
-
+    # ------------------------------------------------------------------
+    # Public methods
+    # ------------------------------------------------------------------
 
     def get_preview_stream_frame(self) -> Optional[bytes]:
         frame = self._read_frame()
@@ -429,122 +260,63 @@ class SystemController:
             print(f"[ERROR] Exception during PNG encoding: {e}")
             return None
 
-
-
     def process_detected(self) -> Optional[Dict[str, Any]]:
-
         frame = self._read_frame()
-
         if frame is None:
-
             return None
 
-
-
         if self.classifier is None:
-
             timestamp = datetime.now()
-
             filename = f"capture_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.jpg"
-
             file_path = self.capture_dir / filename
-
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             cv2.imwrite(str(file_path), frame_rgb)
-
             with self._state_lock:
-
                 self._last_result = {
-
                     "label": "AI_UNAVAILABLE",
-
                     "confidence": 0.0,
-
                     "signal": "0",
-
                     "timestamp": timestamp.isoformat(timespec="seconds"),
-
                 }
-
                 self._last_image_rel = f"captures/{filename}"
-
             return self.get_result_payload()
 
-
-
         label, confidence = self.classifier.predict(frame)
-
         signal = self._label_to_signal.get(label, "0")
-
         self.queue.enqueue(signal)
 
-
-
         timestamp = datetime.now()
-
         filename = f"capture_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.jpg"
-
         file_path = self.capture_dir / filename
-
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         cv2.imwrite(str(file_path), frame_rgb)
 
-
-
         with self._state_lock:
-
             self._counts[label] = self._counts.get(label, 0) + 1
-
             self._last_result = {
-
                 "label": label,
-
                 "confidence": round(float(confidence), 4),
-
                 "signal": signal,
-
                 "timestamp": timestamp.isoformat(timespec="seconds"),
-
             }
-
             self._last_image_rel = f"captures/{filename}"
-
-
 
         return self.get_result_payload()
 
-
-
     def process_ready_request(self) -> str:
-
         signal = self.queue.dequeue(default="0") or "0"
-
         self.serial.send_signal(signal)
-
         with self._state_lock:
-
             self._last_result["signal"] = signal
-
         return signal
 
-
-
     def get_result_payload(self) -> Dict[str, Any]:
-
         with self._state_lock:
-
             return {
-
                 "counts": dict(self._counts),
-
                 "last_result": dict(self._last_result),
-
                 "last_image": self._last_image_rel,
-
                 "queue_size": self.queue.size(),
-
                 "running": self._running,
-
                 "serial_connected": self.serial.is_connected,
-
             }
