@@ -60,6 +60,8 @@ class SystemController:
         labels = [label for _, label in label_entries]
         if self.classifier is not None and getattr(self.classifier, "labels", None):
             labels = list(self.classifier.labels)
+        self._labels = list(labels)
+        self._signal_by_label = dict(signal_by_label)
 
         self.queue = ResultQueue()
         self.serial = SerialComm(port=serial_port, baudrate=baudrate)
@@ -90,7 +92,7 @@ class SystemController:
         }
         self._last_image_rel = ""
         self._label_to_signal = {
-            label: signal_by_label.get(label, str(index))
+            label: self._signal_by_label.get(label, str(index))
             for index, label in enumerate(labels)
         }
 
@@ -331,6 +333,7 @@ class SystemController:
     def get_result_payload(self) -> Dict[str, Any]:
         with self._state_lock:
             return {
+                "labels": list(self._labels),
                 "counts": dict(self._counts),
                 "last_result": dict(self._last_result),
                 "last_image": self._last_image_rel,

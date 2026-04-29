@@ -6,12 +6,50 @@ async function postJson(url) {
   return response.json();
 }
 
+function renderCountCards(container, labels, counts) {
+  if (!container) {
+    return;
+  }
+
+  container.replaceChildren();
+
+  const normalizedLabels =
+    Array.isArray(labels) && labels.length ? labels : Object.keys(counts || {});
+
+  if (!normalizedLabels.length) {
+    const emptyCard = document.createElement("article");
+    emptyCard.className = "item count-item count-empty";
+
+    const title = document.createElement("h3");
+    title.textContent = "Chưa có nhãn";
+
+    const value = document.createElement("div");
+    value.textContent = "0";
+
+    emptyCard.append(title, value);
+    container.appendChild(emptyCard);
+    return;
+  }
+
+  normalizedLabels.forEach((label) => {
+    const card = document.createElement("article");
+    card.className = "item count-item";
+
+    const title = document.createElement("h3");
+    title.textContent = label;
+
+    const value = document.createElement("div");
+    value.textContent = String(Number(counts?.[label] || 0));
+
+    card.append(title, value);
+    container.appendChild(card);
+  });
+}
+
 function initDashboardPage() {
   const captureImg = document.getElementById("captureImage");
   const videoStream = document.getElementById("videoStream");
-  const countA = document.getElementById("countA");
-  const countB = document.getElementById("countB");
-  const countC = document.getElementById("countC");
+  const countCards = document.getElementById("countCards");
   const lastLabel = document.getElementById("lastLabel");
   const lastConfidence = document.getElementById("lastConfidence");
   const queueSize = document.getElementById("queueSize");
@@ -26,26 +64,36 @@ function initDashboardPage() {
   async function updateStatus() {
     try {
       const response = await fetch("/result");
-      if (!response.ok) return;
+      if (!response.ok) {
+        return;
+      }
 
       const data = await response.json();
       const counts = data.counts || {};
       const result = data.last_result || {};
 
-      countA.innerText = counts.Capacitor || 0;
-      countB.innerText = counts.IC || 0;
-      countC.innerText = counts.Transistor || 0;
+      renderCountCards(countCards, data.labels || Object.keys(counts), counts);
 
-      lastLabel.innerText = result.label || "N/A";
-      lastConfidence.innerText = Number(result.confidence || 0).toFixed(2);
-      queueSize.innerText = data.queue_size || 0;
-      systemState.innerText = data.running ? "running" : "stopped";
+      if (lastLabel) {
+        lastLabel.textContent = result.label || "N/A";
+      }
+      if (lastConfidence) {
+        lastConfidence.textContent = Number(result.confidence || 0).toFixed(2);
+      }
+      if (queueSize) {
+        queueSize.textContent = String(data.queue_size || 0);
+      }
+      if (systemState) {
+        systemState.textContent = data.running ? "running" : "stopped";
+      }
 
-      if (data.last_image_url) {
+      if (captureImg && data.last_image_url) {
         captureImg.src = `${data.last_image_url}?t=${Date.now()}`;
       }
     } catch (error) {
-      systemState.innerText = "error";
+      if (systemState) {
+        systemState.textContent = "error";
+      }
     }
   }
 
@@ -70,6 +118,53 @@ function initDashboardPage() {
   updateStatus();
 }
 
+function setHistoryMessage(historyTableBody, message) {
+  historyTableBody.replaceChildren();
+  const row = document.createElement("tr");
+  const cell = document.createElement("td");
+  cell.colSpan = 5;
+  cell.className = "history-empty-cell";
+  cell.textContent = message;
+  row.appendChild(cell);
+  historyTableBody.appendChild(row);
+}
+
+function buildHistoryRow(item) {
+  const row = document.createElement("tr");
+
+  const idCell = document.createElement("td");
+  idCell.textContent = String(item.id ?? "");
+
+  const imageCell = document.createElement("td");
+  const imageWrap = document.createElement("div");
+  imageWrap.className = "history-table-image";
+
+  if (item.image_url) {
+    const img = document.createElement("img");
+    img.src = item.image_url;
+    img.alt = item.accessory || "Linh kiện";
+    imageWrap.appendChild(img);
+  } else {
+    const placeholder = document.createElement("div");
+    placeholder.className = "history-image-empty compact";
+    placeholder.textContent = "Không có ảnh";
+    imageWrap.appendChild(placeholder);
+  }
+  imageCell.appendChild(imageWrap);
+
+  const accessoryCell = document.createElement("td");
+  accessoryCell.textContent = item.accessory || "N/A";
+
+  const confidentCell = document.createElement("td");
+  confidentCell.textContent = Number(item.confident || 0).toFixed(2);
+
+  const timestampCell = document.createElement("td");
+  timestampCell.textContent = item.timestamp || "N/A";
+
+  row.append(idCell, imageCell, accessoryCell, confidentCell, timestampCell);
+  return row;
+}
+
 async function initHistoryPage() {
   const historySummary = document.getElementById("historySummary");
   const historyTableBody = document.getElementById("historyTableBody");
@@ -92,22 +187,20 @@ async function initHistoryPage() {
     totalPages: 1,
   };
 
-  function renderEmpty(message) {
-    historyTableBody.innerHTML = `
-      <tr>
-        <td colspan="5" class="history-empty-cell">${message}</td>
-      </tr>
-    `;
-  }
-
   function updatePagination() {
-    historyPageInfo.innerText = `Trang ${state.page} / ${state.totalPages}`;
-    historyPrevBtn.disabled = state.page <= 1;
-    historyNextBtn.disabled = state.page >= state.totalPages;
+    if (historyPageInfo) {
+      historyPageInfo.textContent = `Trang ${state.page} / ${state.totalPages}`;
+    }
+    if (historyPrevBtn) {
+      historyPrevBtn.disabled = state.page <= 1;
+    }
+    if (historyNextBtn) {
+      historyNextBtn.disabled = state.page >= state.totalPages;
+    }
   }
 
   async function loadHistory() {
-    historySummary.innerText = "Đang tải dữ liệu...";
+    historySummary.textContent = "Đang tải dữ liệu...";
 
     const params = new URLSearchParams({
       q: state.query,
@@ -127,43 +220,21 @@ async function initHistoryPage() {
       state.page = Number(data.page || 1);
       state.totalPages = Number(data.total_pages || 1);
 
-      historySummary.innerText = state.query
+      historySummary.textContent = state.query
         ? `Tìm thấy ${data.total || 0} bản ghi cho "${state.query}".`
         : `Đã lưu ${data.total || 0} bản ghi.`;
 
       if (!history.length) {
-        renderEmpty("Không có dữ liệu phù hợp.");
+        setHistoryMessage(historyTableBody, "Không có dữ liệu phù hợp.");
         updatePagination();
         return;
       }
 
-      historyTableBody.innerHTML = history
-        .map((item) => {
-          const imageUrl = item.image_url || "";
-          const label = item.accessory || "N/A";
-          const confident = Number(item.confident || 0).toFixed(2);
-          const timestamp = item.timestamp || "N/A";
-
-          return `
-            <tr>
-              <td>${item.id}</td>
-              <td>
-                <div class="history-table-image">
-                  ${imageUrl ? `<img src="${imageUrl}" alt="${label}" />` : '<div class="history-image-empty compact">Không có ảnh</div>'}
-                </div>
-              </td>
-              <td>${label}</td>
-              <td>${confident}</td>
-              <td>${timestamp}</td>
-            </tr>
-          `;
-        })
-        .join("");
-
+      historyTableBody.replaceChildren(...history.map(buildHistoryRow));
       updatePagination();
     } catch (error) {
-      historySummary.innerText = "Không tải được lịch sử.";
-      renderEmpty("Đã xảy ra lỗi khi tải dữ liệu.");
+      historySummary.textContent = "Không tải được lịch sử.";
+      setHistoryMessage(historyTableBody, "Đã xảy ra lỗi khi tải dữ liệu.");
       updatePagination();
     }
   }
@@ -206,9 +277,9 @@ async function initHistoryPage() {
       state.query = "";
       historySearchInput.value = "";
       await loadHistory();
-      historySummary.innerText = "Đã xóa toàn bộ lịch sử.";
+      historySummary.textContent = "Đã xóa toàn bộ lịch sử.";
     } catch (error) {
-      historySummary.innerText = "Không xóa được lịch sử.";
+      historySummary.textContent = "Không xóa được lịch sử.";
     }
   });
 
@@ -231,8 +302,8 @@ async function initHistoryPage() {
   try {
     await loadHistory();
   } catch (error) {
-    historySummary.innerText = "Không tải được lịch sử.";
-    renderEmpty("Đã xảy ra lỗi khi tải dữ liệu.");
+    historySummary.textContent = "Không tải được lịch sử.";
+    setHistoryMessage(historyTableBody, "Đã xảy ra lỗi khi tải dữ liệu.");
   }
 }
 

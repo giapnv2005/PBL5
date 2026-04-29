@@ -38,7 +38,7 @@ Hệ thống gồm 4 lớp chính:
 - Dashboard web hiển thị:
   - luồng camera,
   - ảnh vừa chụp,
-  - số lượng từng loại linh kiện,
+  - số lượng từng loại linh kiện theo labels thực tế từ model,
   - nhãn và độ tin cậy mới nhất,
   - trạng thái chạy/dừng của hệ thống.
 
@@ -168,6 +168,7 @@ Truy cập dashboard:
 - `GET /`: Trang dashboard.
 - `GET /video_feed`: Stream camera dạng multipart (frame PNG).
 - `GET /result`: Trả JSON trạng thái tổng hợp.
+  - Trường `labels` chứa danh sách nhãn theo thứ tự cấu hình.
 - `POST /trigger`: Kích hoạt 1 lượt detect thủ công (phục vụ test).
 - `POST /start`: Khởi động controller.
 - `POST /stop`: Dừng controller.
