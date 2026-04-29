@@ -24,6 +24,7 @@ except ImportError:  # pragma: no cover
 
 from src.queue_manager import ResultQueue
 from src.serial_comm import SerialComm
+from src.database import DetectionDatabase
 
 try:
     from src.image_processing import ComponentClassifier
@@ -40,6 +41,7 @@ class SystemController:
         model_path: str,
         labels_path: str,
         capture_dir: str,
+        database_path: str,
         serial_port: str = "/dev/ttyUSB0",
         baudrate: int = 9600,
         camera_index: int = 0,
@@ -61,6 +63,7 @@ class SystemController:
 
         self.queue = ResultQueue()
         self.serial = SerialComm(port=serial_port, baudrate=baudrate)
+        self.database = DetectionDatabase(database_path)
 
         self.capture_dir = Path(capture_dir)
         self.capture_dir.mkdir(parents=True, exist_ok=True)
@@ -271,12 +274,19 @@ class SystemController:
             file_path = self.capture_dir / filename
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             cv2.imwrite(str(file_path), frame_rgb)
+            timestamp_text = timestamp.isoformat(timespec="seconds")
+            self.database.add_detection(
+                accessory="AI_UNAVAILABLE",
+                confident=0.0,
+                timestamp=timestamp_text,
+                image_path=str(file_path),
+            )
             with self._state_lock:
                 self._last_result = {
                     "label": "AI_UNAVAILABLE",
                     "confidence": 0.0,
                     "signal": "0",
-                    "timestamp": timestamp.isoformat(timespec="seconds"),
+                    "timestamp": timestamp_text,
                 }
                 self._last_image_rel = f"captures/{filename}"
             return self.get_result_payload()
@@ -290,14 +300,22 @@ class SystemController:
         file_path = self.capture_dir / filename
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         cv2.imwrite(str(file_path), frame_rgb)
+        timestamp_text = timestamp.isoformat(timespec="seconds")
+        confidence_value = round(float(confidence), 4)
+        self.database.add_detection(
+            accessory=label,
+            confident=confidence_value,
+            timestamp=timestamp_text,
+            image_path=str(file_path),
+        )
 
         with self._state_lock:
             self._counts[label] = self._counts.get(label, 0) + 1
             self._last_result = {
                 "label": label,
-                "confidence": round(float(confidence), 4),
+                "confidence": confidence_value,
                 "signal": signal,
-                "timestamp": timestamp.isoformat(timespec="seconds"),
+                "timestamp": timestamp_text,
             }
             self._last_image_rel = f"captures/{filename}"
 

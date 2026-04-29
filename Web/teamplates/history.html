@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lịch Sử Phân Loại</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body class="history-page">
+    <header>
+      <h1>HỆ THỐNG PHÂN LOẠI LINH KIỆN</h1>
+    </header>
+
+    <main class="history-shell">
+      <section class="panel history-panel">
+        <div class="history-header">
+          <div>
+            <h2>Lịch sử phân loại</h2>
+          </div>
+          <a class="history-back-btn" href="/">Về giao diện chính</a>
+        </div>
+
+        <div class="history-toolbar">
+          <label class="history-search">
+            <span>Tìm theo tên linh kiện</span>
+            <div class="history-search-row">
+              <input
+                id="historySearchInput"
+                type="text"
+                placeholder="Ví dụ: IC, Capacitor, Transistor"
+              />
+              <button id="historySearchBtn" type="button">Tìm kiếm</button>
+            </div>
+          </label>
+
+          <div class="history-toolbar-actions">
+            <button id="historyResetBtn" class="secondary-btn" type="button">Làm mới</button>
+            <button id="historyDeleteBtn" class="danger-btn" type="button">Xóa lịch sử</button>
+          </div>
+        </div>
+
+        <div id="historySummary" class="history-summary">Đang tải dữ liệu...</div>
+
+        <div class="history-table-wrap">
+          <table class="history-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Ảnh đã chụp</th>
+                <th>Linh kiện</th>
+                <th>Confident</th>
+                <th>Timestamp</th>
+              </tr>
+            </thead>
+            <tbody id="historyTableBody">
+              <tr>
+                <td colspan="5" class="history-empty-cell">Đang tải dữ liệu...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="history-pagination">
+          <button id="historyPrevBtn" type="button">Trang trước</button>
+          <div id="historyPageInfo" class="history-page-info">Trang 1 / 1</div>
+          <button id="historyNextBtn" type="button">Trang sau</button>
+        </div>
+      </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+  </body>
+</html>

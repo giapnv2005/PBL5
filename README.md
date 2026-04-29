@@ -22,10 +22,11 @@ Hệ thống gồm 4 lớp chính:
 7. [Chạy hệ thống](#chạy-hệ-thống)
 8. [API hiện có](#api-hiện-có)
 9. [Giao thức Serial Pi-Arduino](#giao-thức-serial-pi-arduino)
-10. [Mapping nhãn sang tín hiệu](#mapping-nhãn-sang-tín-hiệu)
-11. [Mô tả các module chính](#mô-tả-các-module-chính)
-12. [Xử lý sự cố](#xử-lý-sự-cố)
-13. [Phụ thuộc](#phụ-thuộc)
+10. [Lưu trữ SQLite](#lưu-trữ-sqlite)
+11. [Mapping nhãn sang tín hiệu](#mapping-nhãn-sang-tín-hiệu)
+12. [Mô tả các module chính](#mô-tả-các-module-chính)
+13. [Xử lý sự cố](#xử-lý-sự-cố)
+14. [Phụ thuộc](#phụ-thuộc)
 
 ## Tính năng nổi bật
 
@@ -33,6 +34,7 @@ Hệ thống gồm 4 lớp chính:
 - Hỗ trợ camera qua OpenCV (ưu tiên) và Picamera2 (dự phòng).
 - Đồng bộ kết quả bằng `ResultQueue` để tránh lệch nhịp giữa detect và cơ cấu gạt.
 - Giao tiếp serial với Arduino qua `/dev/ttyUSB0`.
+- Lưu dữ liệu phát hiện vào SQLite để có thể truy xuất lại lịch sử.
 - Dashboard web hiển thị:
   - luồng camera,
   - ảnh vừa chụp,
@@ -105,6 +107,7 @@ PBL5/
 |  `- labels.txt
 |- src/
 |  |- controller.py
+|  |- database.py
 |  |- image_processing.py
 |  |- model_loader.py
 |  |- queue_manager.py
@@ -117,9 +120,12 @@ PBL5/
    |  `- captures/
    `- teamplates/
       `- index.html
+`- data/
+  `- PBL5.db
 ```
 
 Lưu ý: thư mục template hiện đang là `teamplates` và Flask cũng đang cấu hình đúng theo tên này.
+SQLite database vật lý được tạo/tồn tại tại `data/PBL5.db` khi ứng dụng khởi động.
 
 ## Yêu cầu môi trường
 
@@ -166,6 +172,18 @@ Truy cập dashboard:
 - `POST /start`: Khởi động controller.
 - `POST /stop`: Dừng controller.
 
+## Lưu trữ SQLite
+
+Mỗi lần hệ thống phát hiện và phân loại xong, một bản ghi được lưu vào bảng `detections` với schema sau:
+
+- `id`: khóa chính tự tăng.
+- `accessory`: tên linh kiện được dự đoán.
+- `confident`: độ tin cậy của mô hình.
+- `timestamp`: thời điểm ghi nhận kết quả.
+- `image_path`: đường dẫn ảnh đã chụp.
+
+Bảng được tạo tự động khi ứng dụng khởi động. File database mặc định nằm tại `data/PBL5.db`.
+
 ## Giao thức Serial Pi-Arduino
 
 ### Arduino -> Raspberry Pi
@@ -198,6 +216,7 @@ Ví dụ hiện tại:
 - `src/image_processing.py`: Lớp `ComponentClassifier` thực hiện suy luận và chuẩn hóa kết quả.
 - `src/queue_manager.py`: Hàng đợi FIFO thread-safe cho tín hiệu phân loại.
 - `src/serial_comm.py`: Quản lý kết nối serial, đọc/ghi dữ liệu với Arduino.
+- `src/database.py`: Lớp làm việc với SQLite, tạo bảng và lưu lịch sử phát hiện.
 - `src/controller.py`: Bộ điều phối trung tâm (camera + AI + queue + serial + trạng thái web).
 - `Web/app.py`: Flask app cung cấp giao diện và API.
 - `run.py`: Điểm chạy chính của toàn hệ thống.
