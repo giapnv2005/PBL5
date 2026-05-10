@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Tuple, Dict
 import numpy as np
 
-from src.model_loader import TFLiteModelLoader
+from src.model.model_loader import TFLiteModelLoader
 
 
 class ComponentClassifier:
@@ -29,7 +29,18 @@ class ComponentClassifier:
         exp_scores = np.exp(shifted)
         return exp_scores / np.sum(exp_scores)
 
-    def predict(self, frame: np.ndarray) -> Tuple[str, float]:
+    def predict(self, frame: np.ndarray, confidence_threshold: float = 0.7) -> Tuple[str, float, dict]:
+        """
+        Predict class and return label, confidence, and probability distribution.
+        If confidence < threshold, return 'unknown'.
+        
+        Args:
+            frame: Input frame (BGR image)
+            confidence_threshold: Minimum confidence to accept prediction (default 0.7)
+            
+        Returns:
+            tuple: (label, confidence, probabilities_dict)
+        """
         input_data = self.loader.preprocess(frame)
 
         self.interpreter.set_tensor(self.input_details[0]["index"], input_data)
@@ -50,12 +61,22 @@ class ComponentClassifier:
 
         class_index = int(np.argmax(probs))
         confidence = float(probs[class_index])
+        
+        # Build probability distribution dictionary
+        probs_dict = {}
+        for idx, prob in enumerate(probs):
+            class_name = self.labels[idx] if idx < len(self.labels) else f"class_{idx}"
+            probs_dict[class_name] = float(prob)
 
-        if not self.labels:
-            label = str(class_index)
-        elif class_index < len(self.labels):
-            label = self.labels[class_index]
+        # Check confidence threshold
+        if confidence < confidence_threshold:
+            label = "unknown"
         else:
-            label = f"class_{class_index}"
+            if not self.labels:
+                label = str(class_index)
+            elif class_index < len(self.labels):
+                label = self.labels[class_index]
+            else:
+                label = f"class_{class_index}"
 
-        return label, confidence
+        return label, confidence, probs_dict

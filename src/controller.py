@@ -2,32 +2,19 @@ from __future__ import annotations
 
 import threading
 import time
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import cv2
 
-try:
-    from picamera2 import Picamera2  # type: ignore[import-not-found]
-except ImportError:  # pragma: no cover
-    # On Raspberry Pi, picamera2 is commonly installed via apt into
-    # /usr/lib/python3/dist-packages, which is not visible in a local venv.
-    dist_packages = "/usr/lib/python3/dist-packages"
-    if dist_packages not in sys.path:
-        sys.path.append(dist_packages)
-    try:
-        from picamera2 import Picamera2  # type: ignore[import-not-found]
-    except ImportError:
-        Picamera2 = None
-
-from src.queue_manager import ResultQueue
-from src.serial_comm import SerialComm
-from src.database import DetectionDatabase
+from src.queue import ResultQueue
+from src.communication import SerialComm, ArduinoProtocol
+from src.storage import DetectionDatabase
+from src.camera import CameraManager
 
 try:
-    from src.image_processing import ComponentClassifier
+    from src.model import ComponentClassifier
 except Exception as exc:  # pragma: no cover
     ComponentClassifier = None
     print(f"[WARNING] AI classifier import failed: {exc}")
@@ -66,22 +53,20 @@ class SystemController:
         self.queue = ResultQueue()
         self.serial = SerialComm(port=serial_port, baudrate=baudrate)
         self.database = DetectionDatabase(database_path)
+        self.camera_manager = CameraManager(camera_width=640, camera_height=480)
+        self.protocol = ArduinoProtocol(serial_send_callback=self.serial.send_signal)
 
         self.capture_dir = Path(capture_dir)
         self.capture_dir.mkdir(parents=True, exist_ok=True)
 
-        self._camera_size = (640, 480)
-        self._camera_format = "RGB888"
-        self.camera = None          # giữ để không break code ngoài trỏ vào thuộc tính này
+        # Legacy attributes for compatibility
+        self.camera = None
         self.picam2 = None
-        self._camera_backend = "none"
+
         self._running = False
         self._thread: Optional[threading.Thread] = None
 
         self._state_lock = threading.Lock()
-        self._camera_lock = threading.Lock()
-
-        self._init_camera()
 
         self._counts: Dict[str, int] = {label: 0 for label in labels}
         self._last_result: Dict[str, Any] = {
@@ -89,6 +74,7 @@ class SystemController:
             "confidence": 0.0,
             "signal": "0",
             "timestamp": None,
+            "probabilities": {},
         }
         self._last_image_rel = ""
         self._label_to_signal = {
@@ -124,9 +110,7 @@ class SystemController:
     def start(self) -> None:
         if self._running:
             return
-        with self._camera_lock:
-            if self._camera_backend == "none":
-                self._init_camera()
+        self.camera_manager.initialize()
         self._running = True
         self.serial.connect()
         self._thread = threading.Thread(target=self._serial_loop, daemon=True)
@@ -138,92 +122,11 @@ class SystemController:
             self._thread.join(timeout=1.0)
         self._thread = None
         self.serial.close()
-        with self._camera_lock:
-            self._close_camera()
-
-    # ------------------------------------------------------------------
-    # Camera — chỉ dùng Picamera2 (camera CSI chính hãng Raspberry Pi)
-    # ------------------------------------------------------------------
-
-    def _init_camera(self) -> None:
-        self._close_camera()
-
-        if Picamera2 is None:
-            print("[ERROR] Picamera2 không khả dụng — kiểm tra cài đặt libcamera")
-            return
-
-        picam2 = None
-        try:
-            picam2 = Picamera2()
-            config = picam2.create_preview_configuration(
-                main={"size": self._camera_size, "format": self._camera_format}
-            )
-            picam2.configure(config)
-            picam2.start()
-
-            # Chờ ISP hội tụ Auto Exposure và Auto White Balance
-            # Camera Module V2 (IMX219) cần ~2 giây để ổn định
-            time.sleep(2.0)
-
-            frame = picam2.capture_array()
-            if frame is not None:
-                self.picam2 = picam2
-                self._camera_backend = "picamera2"
-                print("[OK] Camera ready với Picamera2 (ISP đã hội tụ)")
-                return
-
-            print("[ERROR] Picamera2 khởi động xong nhưng không capture được frame")
-
-        except Exception as exc:
-            print(f"[ERROR] Picamera2 init thất bại: {exc}")
-
-        finally:
-            # Nếu init thất bại thì dọn dẹp instance tạm
-            if picam2 is not None and self.picam2 is None:
-                try:
-                    picam2.stop()
-                except Exception:
-                    pass
-                try:
-                    picam2.close()
-                except Exception:
-                    pass
-
-    def _close_camera(self) -> None:
-        if self.picam2 is not None:
-            try:
-                self.picam2.stop()
-            except Exception:
-                pass
-            try:
-                self.picam2.close()
-            except Exception:
-                pass
-        self.picam2 = None
-        self.camera = None
-        self._camera_backend = "none"
-        time.sleep(0.1)
-
-    # ------------------------------------------------------------------
-    # Frame capture
-    # ------------------------------------------------------------------
+        self.camera_manager.close()
 
     def _read_frame(self):
-        with self._camera_lock:
-            if self._camera_backend == "none":
-                self._init_camera()
-
-            if self._camera_backend == "picamera2" and self.picam2 is not None:
-                try:
-                    frame_rgb = self.picam2.capture_array()
-                    if frame_rgb is not None:
-                        # Picamera2 trả về RGB, chuyển sang BGR cho OpenCV/classifier
-                        return cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
-                except Exception as exc:
-                    print(f"[WARNING] Picamera2 capture thất bại: {exc}")
-                    self._close_camera()
-
-            return None
+        """Read frame from camera manager."""
+        return self.camera_manager.read_frame()
 
     # ------------------------------------------------------------------
     # Serial loop
@@ -236,16 +139,12 @@ class SystemController:
                 time.sleep(0.01)
                 continue
 
-            if message == "DETECTED":
+            if self.protocol.is_detect_message(message):
                 payload = self.process_detected()
-                signal = "0"
-                if payload is not None:
-                    signal = str(payload.get("last_result", {}).get("signal", "0"))
-                # Compatibility: một số Arduino sketch gửi tín hiệu ngay sau DETECTED
-                self.serial.send_signal(signal)
+                self.protocol.handle_detect_message(payload)
 
-            elif message in {"READY", "REQUEST", "IR2", "IR3"}:
-                self.process_ready_request()
+            elif self.protocol.is_ready_message(message):
+                self.protocol.handle_ready_message(self.process_ready_request)
 
     # ------------------------------------------------------------------
     # Public methods
@@ -289,13 +188,19 @@ class SystemController:
                     "confidence": 0.0,
                     "signal": "0",
                     "timestamp": timestamp_text,
+                    "probabilities": {},
                 }
                 self._last_image_rel = f"captures/{filename}"
             return self.get_result_payload()
 
-        label, confidence = self.classifier.predict(frame)
+        label, confidence, probs_dict = self.classifier.predict(frame)
         signal = self._label_to_signal.get(label, "0")
-        self.queue.enqueue(signal)
+        
+        # Only enqueue if not unknown
+        if label != "unknown":
+            self.queue.enqueue(signal)
+        else:
+            signal = ""
 
         timestamp = datetime.now()
         filename = f"capture_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.jpg"
@@ -318,14 +223,17 @@ class SystemController:
                 "confidence": confidence_value,
                 "signal": signal,
                 "timestamp": timestamp_text,
+                "probabilities": probs_dict,  # Thêm probability distribution
             }
             self._last_image_rel = f"captures/{filename}"
 
         return self.get_result_payload()
 
     def process_ready_request(self) -> str:
-        signal = self.queue.dequeue(default="0") or "0"
-        self.serial.send_signal(signal)
+        """Dequeue next signal from queue."""
+        signal = self.queue.dequeue(default=None)
+        if not signal:
+            return ""
         with self._state_lock:
             self._last_result["signal"] = signal
         return signal

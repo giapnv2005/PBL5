@@ -2,14 +2,16 @@
 
 ## Giới thiệu
 
-Đây là dự án phân loại linh kiện theo thời gian thực, sử dụng camera kết hợp AI (TensorFlow Lite) trên Raspberry Pi, đồng thời giao tiếp với Arduino qua Serial để điều khiển cơ cấu phân loại.
+Đây là dự án phân loại linh kiện theo thời gian thực, sử dụng camera Raspberry Pi kết hợp AI (TensorFlow Lite) trên Raspberry Pi, đồng thời giao tiếp với Arduino qua Serial để điều khiển cơ cấu phân loại.
 
-Hệ thống gồm 4 lớp chính:
+**Kiến trúc AI+IoT 5 lớp độc lập:**
+- **Lớp Model**: Suy luận AI (TensorFlow Lite) - graceful degradation nếu không có TensorFlow
+- **Lớp Camera**: Quản lý camera Picamera2 với ISP convergence
+- **Lớp Communication**: Giao thức Serial với Arduino (DETECTED/READY/REQUEST)
+- **Lớp Storage**: Lưu trữ SQLite cho lịch sử phát hiện
+- **Lớp Queue**: Hàng đợi FIFO thread-safe để đồng bộ kết quả
 
-- Nhận ảnh từ camera.
-- Suy luận AI để nhận diện linh kiện.
-- Đồng bộ kết quả bằng hàng đợi (queue) theo nhịp cảm biến.
-- Hiển thị trạng thái và kết quả qua giao diện web Flask.
+Ngoài ra: **Lớp Configuration** tập trung hóa cấu hình, **Flask Factory** tách biệt Flask khỏi business logic.
 
 ## Mục lục
 
@@ -30,17 +32,15 @@ Hệ thống gồm 4 lớp chính:
 
 ## Tính năng nổi bật
 
-- Phân loại linh kiện bằng mô hình `.tflite`.
-- Hỗ trợ camera qua OpenCV (ưu tiên) và Picamera2 (dự phòng).
-- Đồng bộ kết quả bằng `ResultQueue` để tránh lệch nhịp giữa detect và cơ cấu gạt.
-- Giao tiếp serial với Arduino qua `/dev/ttyUSB0`.
-- Lưu dữ liệu phát hiện vào SQLite để có thể truy xuất lại lịch sử.
-- Dashboard web hiển thị:
-  - luồng camera,
-  - ảnh vừa chụp,
-  - số lượng từng loại linh kiện theo labels thực tế từ model,
-  - nhãn và độ tin cậy mới nhất,
-  - trạng thái chạy/dừng của hệ thống.
+- ✅ Phân loại linh kiện bằng mô hình `.tflite` với xác suất (softmax output)
+- ✅ Graceful degradation: Chạy camera+serial khi TensorFlow không có
+- ✅ Camera Picamera2 với ISP convergence (hội tụ ISP sau 2s)
+- ✅ Threshold tin cậy 0.7: Khi confidence < 0.7 → "unknown" (không gửi signal)
+- ✅ Đồng bộ kết quả bằng `ResultQueue` để tránh lệch nhịp giữa detect và cơ cấu
+- ✅ Giao tiếp serial với Arduino qua `/dev/ttyUSB0`
+- ✅ Lưu dữ liệu phát hiện vào SQLite (với probability distribution)
+- ✅ Dashboard web hiển thị: camera stream, ảnh chụp, đếm từng loại, độ tin cậy
+- ✅ Kiến trúc layered: Model, Camera, Communication, Storage, Queue
 
 ## Kiến trúc hệ thống
 
@@ -99,40 +99,69 @@ sequenceDiagram
 
 ```text
 PBL5/
-|- run.py
-|- requirements.txt
-|- README.md
-|- Models/
-|  |- my_model.tflite
-|  `- labels.txt
-|- src/
-|  |- controller.py
-|  |- database.py
-|  |- image_processing.py
-|  |- model_loader.py
-|  |- queue_manager.py
-|  `- serial_comm.py
-`- Web/
-   |- app.py
-   |- static/
-   |  |- script.js
-   |  |- style.css
-   |  `- captures/
-   `- teamplates/
-      `- index.html
-`- data/
-  `- PBL5.db
+├── run.py                          # Entry point chính
+├── requirements.txt                # Phụ thuộc Python
+├── README.md                       # Tài liệu này
+├── Models/
+│   ├── my_model.tflite            # Model phân loại TensorFlow Lite
+│   └── labels.txt                 # Danh sách nhãn (Capacitor, IC, Transistor)
+├── src/                           # **5-LAYER ARCHITECTURE**
+│   ├── config.py                  # Configuration & ControllerFactory (tập trung cấu hình)
+│   ├── controller.py              # SystemController - bộ điều phối trung tâm
+│   ├── model/                     # **LAYER 1: AI Model**
+│   │   ├── __init__.py
+│   │   ├── classifier.py          # ComponentClassifier (suy luận AI)
+│   │   └── model_loader.py        # TFLiteModelLoader (load model, preprocessing)
+│   ├── camera/                    # **LAYER 2: Camera Hardware**
+│   │   ├── __init__.py
+│   │   └── camera_manager.py      # CameraManager (Picamera2, ISP convergence)
+│   ├── communication/             # **LAYER 3: Serial Protocol**
+│   │   ├── __init__.py
+│   │   ├── serial_comm.py         # SerialComm (low-level serial I/O)
+│   │   └── arduino_protocol.py    # ArduinoProtocol (message routing)
+│   ├── storage/                   # **LAYER 4: Data Persistence**
+│   │   ├── __init__.py
+│   │   └── database.py            # DetectionDatabase (SQLite wrapper)
+│   └── queue/                     # **LAYER 5: Signal Queue**
+│       ├── __init__.py
+│       └── queue_manager.py       # ResultQueue (FIFO thread-safe)
+├── Web/                           # Flask Web Layer
+│   ├── app.py                     # Entry point (backward compatibility)
+│   ├── app_factory.py             # Flask factory pattern (absolute paths)
+│   ├── routes.py                  # API endpoints (/, /video_feed, /result, etc.)
+│   ├── utils.py                   # Web utilities
+│   ├── static/
+│   │   ├── style.css
+│   │   ├── script.js
+│   │   └── captures/              # Thư mục lưu ảnh chụp
+│   └── teamplates/
+│       ├── index.html             # Dashboard web
+│       └── history.html           # Lịch sử phát hiện
+├── tests/
+│   └── test_model.py              # Unit test model loading & prediction
+└── data/
+    └── PBL5.db                    # SQLite database (tự động tạo)
 ```
 
-Lưu ý: thư mục template hiện đang là `teamplates` và Flask cũng đang cấu hình đúng theo tên này.
-SQLite database vật lý được tạo/tồn tại tại `data/PBL5.db` khi ứng dụng khởi động.
+**Ưu điểm kiến trúc layered:**
+- ✅ Mỗi layer độc lập, có interface rõ ràng
+- ✅ Dễ test, debug, bảo trì
+- ✅ Graceful degradation nếu layer nào không available
+- ✅ Tách biệt concerns (Model ≠ Camera ≠ Serial)
 
 ## Yêu cầu môi trường
 
-- Linux (khuyến nghị Raspberry Pi OS).
-- Python 3.10 trở lên.
-- Camera hoạt động được với OpenCV hoặc Picamera2.
-- Arduino kết nối serial USB tại `/dev/ttyUSB0`.
+- **OS**: Linux (khuyến nghị Raspberry Pi OS)
+- **Python**: 3.10 trở lên
+- **Camera**: Picamera2 kết nối với Raspberry Pi (hỗ trợ ISP convergence)
+- **Arduino**: Kết nối serial USB tại `/dev/ttyUSB0`
+- **Dependencies chính**:
+  - Flask 3.0.3 - Web framework
+  - TensorFlow Lite (`tflite-runtime`) - **OPTIONAL** (graceful degradation nếu không có)
+  - pyserial 3.5 - Serial communication
+  - Pillow 10.0.0 - Image processing
+  - numpy 1.24.3 - Numerical computing
+  - Werkzeug 3.0.1 - WSGI utilities
 
 ## Cài đặt
 
@@ -213,14 +242,42 @@ Ví dụ hiện tại:
 
 ## Mô tả các module chính
 
-- `src/model_loader.py`: Load model TFLite, đọc thông tin tensor, tiền xử lý đầu vào.
-- `src/image_processing.py`: Lớp `ComponentClassifier` thực hiện suy luận và chuẩn hóa kết quả.
-- `src/queue_manager.py`: Hàng đợi FIFO thread-safe cho tín hiệu phân loại.
-- `src/serial_comm.py`: Quản lý kết nối serial, đọc/ghi dữ liệu với Arduino.
-- `src/database.py`: Lớp làm việc với SQLite, tạo bảng và lưu lịch sử phát hiện.
-- `src/controller.py`: Bộ điều phối trung tâm (camera + AI + queue + serial + trạng thái web).
-- `Web/app.py`: Flask app cung cấp giao diện và API.
-- `run.py`: Điểm chạy chính của toàn hệ thống.
+### Lớp Configuration & Orchestration
+- **`src/config.py`**: Tập trung cấu hình (MODEL_PATH, SERIAL_PORT, BAUDRATE, etc), ControllerFactory pattern
+- **`src/controller.py`**: SystemController - bộ điều phối trung tâm, orchestrate tất cả 5 layers
+
+### **LAYER 1: Model (AI Inference)**
+- **`src/model/model_loader.py`**: TFLiteModelLoader - Load model, decode labels, preprocessing đầu vào
+- **`src/model/classifier.py`**: ComponentClassifier - Suy luận AI, trả về (label, confidence, probabilities_dict)
+- Đặc biệt: Threshold 0.7, nếu confidence < 0.7 → label="unknown"
+- Graceful degradation: Warning nếu TensorFlow không có, hệ thống vẫn chạy (camera+serial)
+
+### **LAYER 2: Camera (Hardware Abstraction)**
+- **`src/camera/camera_manager.py`**: CameraManager - Quản lý Picamera2, ISP convergence (2s wait)
+- Methods: `initialize()`, `read_frame()`, `close()`
+
+### **LAYER 3: Communication (Serial Protocol)**
+- **`src/communication/serial_comm.py`**: SerialComm - Low-level serial I/O với Arduino
+- **`src/communication/arduino_protocol.py`**: ArduinoProtocol - Xử lý message routing (DETECTED, READY, REQUEST, IR2, IR3)
+- Đặc biệt: Nếu label="unknown", không gửi signal
+
+### **LAYER 4: Storage (Data Persistence)**
+- **`src/storage/database.py`**: DetectionDatabase - Wrapper SQLite thread-safe
+- Schema: id, accessory, confident, timestamp, image_path
+- Tự động tạo bảng khi khởi động
+
+### **LAYER 5: Queue (Signal Synchronization)**
+- **`src/queue/queue_manager.py`**: ResultQueue - FIFO queue thread-safe cho tín hiệu phân loại
+
+### Web Layer
+- **`Web/app_factory.py`**: Flask factory pattern, absolute path resolution
+- **`Web/routes.py`**: API endpoints (/, /video_feed, /result, /trigger, /start, /stop, /history-data)
+- **`Web/utils.py`**: Utility functions (normalize_image_url)
+- **`Web/app.py`**: Entry point (backward compatibility, dùng app_factory)
+
+### Utilities
+- **`run.py`**: Main entry point, khởi động Flask app từ app_factory
+- **`tests/test_model.py`**: Unit test model loading & prediction API
 
 ## Xử lý sự cố
 
@@ -238,23 +295,149 @@ Ví dụ hiện tại:
 
 ### Không nhận camera
 
-- Kiểm tra lại cổng camera và quyền truy cập.
-- Hệ thống sẽ ưu tiên OpenCV, nếu thất bại sẽ thử Picamera2.
-- Đảm bảo camera không bị tiến trình khác chiếm dụng.
+- Kiểm tra kết nối camera ribbon cable (CSI port)
+- Kiểm tra camera đã enabled trong raspi-config:
+  ```bash
+  sudo raspi-config
+  # Interface Options → Camera → Enable
+  ```
+- Hệ thống sử dụng Picamera2 với libcamera backend
+- Đảm bảo camera không bị tiến trình khác chiếm dụng
 
 ### Lỗi model hoặc labels
 
 - Đảm bảo tồn tại đủ 2 file:
   - `Models/my_model.tflite`
   - `Models/labels.txt`
-- Số lượng labels nên khớp với số class output của model.
+- Số lượng labels nên khớp với số class output của model
+
+### TensorFlow không cài đặt
+
+- Hệ thống sẽ chạy ở chế độ **graceful degradation**
+- Warning: "AI model layer unavailable"
+- Camera + Serial vẫn hoạt động bình thường
+- Để cài đặt TensorFlow:
+  ```bash
+  pip install tflite-runtime
+  ```
+
+## Changelog - Phiên Bản 2.0
+
+### 🏗️ Refactoring Kiến Trúc
+Nâng cấp từ monolithic controller lên **5-layer architecture** với separation of concerns:
+- **Layer 1 - Model**: AI inference (TFLite) độc lập
+- **Layer 2 - Camera**: Hardware abstraction cho Picamera2
+- **Layer 3 - Communication**: Protocol handler cho Arduino serial
+- **Layer 4 - Storage**: SQLite persistence wrapper
+- **Layer 5 - Queue**: FIFO signal queue thread-safe
+- **Config Layer**: Tập trung cấu hình (config.py)
+- **Web Layer**: Flask factory pattern (app_factory.py, routes.py, utils.py)
+
+### 🎯 Xử Lý "Unknown" Predictions
+Đã điều chỉnh logic model prediction để:
+1. Lấy **softmax output (xác suất)** cho tất cả các class
+2. Nếu confidence < **0.7** → coi là **"unknown"**
+3. Trả về **probability distribution** cùng với kết quả prediction
+4. Khi kết quả là `unknown`, **không gửi bất kỳ tín hiệu nào** tới Arduino
+
+### ✅ Lợi ích Chính
+- **Graceful Degradation**: Chạy camera+serial ngay cả khi TensorFlow không có
+- **Dễ Test & Maintain**: Mỗi layer có interface rõ ràng, độc lập
+- **Absolute Path Resolution**: Flask template/static paths giải quyết được trên mọi environment
+- **Better Error Handling**: Các layer có cơ chế fallback
+- **Clean Separation**: AI ≠ Hardware ≠ Protocol ≠ Storage
+
+### 📝 Chi Tiết Các File Thay Đổi
+
+#### Tổ chức lại (Restructured)
+- `src/image_processing.py` → `src/model/classifier.py`
+- `src/model_loader.py` → `src/model/model_loader.py`
+- `src/serial_comm.py` → `src/communication/serial_comm.py`
+- `src/database.py` → `src/storage/database.py`
+- `src/queue_manager.py` → `src/queue/queue_manager.py`
+
+#### File Mới (New)
+- `src/config.py` - Configuration & ControllerFactory
+- `src/camera/camera_manager.py` - Camera hardware abstraction
+- `src/communication/arduino_protocol.py` - Protocol message handler
+- `Web/app_factory.py` - Flask factory pattern
+- `Web/routes.py` - API endpoints
+- `Web/utils.py` - Web utilities
+- `tests/` folder - Unit tests
+
+#### File Cập Nhật (Updated)
+- `src/controller.py` - Simplify to orchestration only, delegate to layers
+- `Web/app.py` - Use app_factory pattern
+- `run.py` - Use app_factory with root_path handling
+- All `__init__.py` files - Export layer modules
+
+**Scenario 1: High confidence (≥ 0.7)**
+```json
+{
+  "label": "Capacitor",
+  "confidence": 0.95,
+  "signal": "1",
+  "probabilities": {
+    "Capacitor": 0.95,
+    "IC": 0.04,
+    "Transistor": 0.01
+  }
+}
+```
+Action: ✅ Enqueue → Gửi signal "1" tới Arduino
+
+**Scenario 2: Low confidence (< 0.7)**
+```json
+{
+  "label": "unknown",
+  "confidence": 0.68,
+  "signal": "",
+  "probabilities": {
+    "Capacitor": 0.35,
+    "IC": 0.33,
+    "Transistor": 0.32
+  }
+}
+```
+Action: ❌ Không enqueue → Không gửi bất kỳ signal nào
+
+### Lợi ích
+
+1. **Tránh False Positives**: Không accept prediction kém tin cậy
+2. **Chuỗi "unknown"**: Dễ track những trường hợp mơ hồ
+3. **Debug tốt hơn**: Thấy full probability distribution
+4. **Linh hoạt**: Có thể thay đổi threshold nếu cần
+
+### Database
+- `accessory` column sẽ có giá trị `"unknown"` khi prediction không tự tin
+- `confident` column sẽ ghi confidence score ngay cả cho "unknown"
+- Thêm field `probabilities` vào JSON response của API web
+
+### Cách tuỳ chỉnh threshold
+
+```python
+# Default threshold 0.7
+label, conf, probs = classifier.predict(frame)
+
+# Threshold cao hơn (strict)
+label, conf, probs = classifier.predict(frame, confidence_threshold=0.9)
+
+# Threshold thấp hơn (lenient)
+label, conf, probs = classifier.predict(frame, confidence_threshold=0.5)
+```
 
 ## Phụ thuộc
 
+### Chính (Required)
 - Flask==3.0.3
-- opencv-python-headless==4.9.0.80
-- numpy==1.24.3
 - pyserial==3.5
-- tflite-runtime==2.14.0
-- Werkzeug==3.0.1
 - Pillow==10.0.0
+- numpy==1.24.3
+- Werkzeug==3.0.1
+
+### Tuỳ chọn (Optional)
+- `tflite-runtime==2.14.0` - AI inference (graceful degradation nếu không có)
+- `picamera2` - Camera Picamera2 (pre-installed trên Raspberry Pi OS)
+- `libcamera` - Libcamera backend (pre-installed trên Raspberry Pi OS)
+
+**Lưu ý**: Picamera2 và libcamera thường đã có sẵn trên Raspberry Pi OS, không cần cài thêm.

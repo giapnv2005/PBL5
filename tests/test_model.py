@@ -1,8 +1,7 @@
 # test_classifier.py
 import cv2
 import numpy as np
-from src.model_loader import TFLiteModelLoader
-from src.image_processing import ComponentClassifier
+from src.model import TFLiteModelLoader, ComponentClassifier
 
 # 1. Load model và in thông tin quantization
 loader = TFLiteModelLoader(
